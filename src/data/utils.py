@@ -1,9 +1,10 @@
 from rdkit.Chem.rdmolfiles import MolFromPDBFile
 from rdkit.Chem.rdchem import Mol
 import numpy as np
-from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo
+from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
 from rdkit.Chem.AllChem import ComputeGasteigerCharges
-import os 
+import os
+from pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
 
 def pdb_to_rdkit_mol(pdb_filepath: str): 
 
@@ -12,6 +13,16 @@ def pdb_to_rdkit_mol(pdb_filepath: str):
         raise FileNotFoundError(f"File {pdb_filepath} not found")
 
     mol = MolFromPDBFile(pdb_filepath, removeHs=True)
+
+    return mol
+
+def mol2_to_rdkit_mol(mol2_filepath: str, sanitize: bool = True): 
+
+    #check if the file exists
+    if not os.path.exists(mol2_filepath):
+        raise FileNotFoundError(f"File {mol2_filepath} not found")
+
+    mol = MolFromMol2File(mol2_filepath, sanitize=sanitize, removeHs=False)
 
     return mol
 
@@ -39,30 +50,62 @@ def get_protein_or_ligand_ids(pdb_filepath: str) -> list:
 
     return atom_types
 
-def rdkit_mol_featurizer(mol: Mol, protein_or_ligand_ids: list) -> tuple: 
+def extract_charges_from_mol2(file_path):
+    charges = []
+
+    # Open the MOL2 file for reading
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+
+    # Flag to track if we are in the @<TRIPOS>ATOM section
+    in_atom_section = False
+
+    # Iterate through lines in the file
+    for line in lines:
+        line = line.strip()
+        
+        # Check for the start of @<TRIPOS>ATOM section
+        if line.startswith('@<TRIPOS>ATOM'):
+            in_atom_section = True
+            continue
+        
+        # Check for the end of @<TRIPOS>ATOM section
+        if in_atom_section and line.startswith('@<TRIPOS>'):
+            break
+        
+        # Process lines within @<TRIPOS>ATOM section
+        if in_atom_section:
+            # Split line by whitespace
+            parts = line.split()
+            
+            # Extract charge from the line (assuming it's the last column)
+            if len(parts) >= 9:  # Ensure there are enough columns
+                try:
+                    charge = float(parts[-1])
+                    charges.append(charge)
+                except ValueError:
+                    # Handle cases where charge cannot be converted to float
+                    charges.append(None)  # Or handle differently based on your needs
+
+    return charges
+
+def get_node_features(mol: Mol,
+                        protein_or_ligand_ids: list = None) -> np.ndarray:
     """
-    Extracts graph features from a given RDKit molecule object.
+    Extracts node features from a given RDKit molecule object.
     Parameters:
+
         mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
-        protein_or_ligand_ids (list): A list of ints describing whether each atom in the molecule is a protein (-1) or a ligand (1) atom. 
+        protein_or_ligand_ids (list): A list of ints describing whether each atom in the molecule is a protein (-1) or a ligand (1) atom.
     Returns:
         node_features (np.ndarray): A 2D array of shape (num_atoms, num_node_features) containing node features:
             (protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization, chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons)
-        edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
-        edge_indices (np.ndarray): A 2D array of shape (num_bonds, 2) containing the indices of the atoms connected by each bond.
     """
-
-    AssignStereochemistry(mol, force=True, cleanIt=True)
-    # Compute Gasteiger charges
-    ComputeGasteigerCharges(mol)
-    # Initialize a list to store feature vector for each node
-    node_features = []
-
-    assert len(protein_or_ligand_ids) == mol.GetNumAtoms(), "The number of atoms in the molecule and the number of atom types do not match."
-
+    node_features  = []
     # Iterate over each atom in the molecule and calculate node features
     for atom in mol.GetAtoms():
         protein_or_ligand_id = protein_or_ligand_ids[atom.GetIdx()] 
+        
         # Calculate node features
         atomic_num = atom.GetAtomicNum()
         atomic_mass = atom.GetMass()
@@ -90,37 +133,110 @@ def rdkit_mol_featurizer(mol: Mol, protein_or_ligand_ids: list) -> tuple:
         num_heteroatoms = len([bond for bond in atom.GetBonds() if bond.GetOtherAtom(atom).GetAtomicNum() != atom.GetAtomicNum()])
         degree = atom.GetDegree()
         num_hydrogens = atom.GetTotalNumHs()
-        partial_charge = atom.GetProp('_GasteigerCharge')
+        partial_charge = atom.GetDoubleProp('_TriposAtomCharges')
         formal_charge = atom.GetFormalCharge()
         num_radical_electrons = atom.GetNumRadicalElectrons()
         # Append node features to list
         node_features.append((protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization,
         chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons))
 
+    return np.array(node_features, dtype='float64')
+
+
+
+def get_edge_features(mol: Mol,
+                      pocket_atom_indices: list,
+                      non_convalent_edges: bool = True) -> tuple:
+    """
+    Extracts edge features from a given RDKit molecule object.
+    Parameters:
+        mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
+    Returns:
+        edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
+        edge_indices (np.ndarray): A 2D array of shape (num_bonds, 2) containing the indices of the atoms connected by each bond.
+    """
     # Initialize a list to store edge features and indices
     edge_indices, edge_features = [], []
-    # Iterate over each bond in the molecule and calculate edge features
-    for bond in mol.GetBonds():
-        # Get edge indices
-        idx1, idx2 = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        # Calculate edge features
-        bond_order = bond.GetBondTypeAsDouble()
-        aromaticity = int(bond.GetIsAromatic())
-        conjugation = int(bond.GetIsConjugated())
-        ring = int(bond.IsInRing())
-        stereochemistry_tag = bond.GetStereo()
-        if stereochemistry_tag == BondStereo.STEREOZ:
-            stereochemistry = 1
-        elif stereochemistry_tag == BondStereo.STEREOE:
-            stereochemistry = -1
-        else:
-            stereochemistry = 0
-        # Append edge indices to list, duplicating to account for both directions
-        edge_indices.append((idx1, idx2))
-        edge_indices.append((idx2, idx1))
-        # Append edge features to list, duplicating to account for both directions
-        edge_features.append((bond_order, aromaticity, conjugation, ring, stereochemistry))
-        edge_features.append((bond_order, aromaticity, conjugation, ring, stereochemistry))
+    #for every atom in the pocket, create an edge between atoms if they are within 4 angstroms of each other
+    for i, atom1 in enumerate(pocket_atom_indices):
+        atom_i = mol.GetAtomWithIdx(atom1)
+        for j, atom2 in enumerate(pocket_atom_indices):
+            atom_j = mol.GetAtomWithIdx(atom2)
+            if j > i: #only consider the upper triangle of the matrix
+                distance = np.linalg.norm(get_atom_coordinates(atom_i) - get_atom_coordinates(atom_j))
+                if distance < 4.0:
+                    #check if there is a bond between the two atoms
+                    bond = mol.GetBondBetweenAtoms(atom1, atom2)
 
+                    if bond: 
+                        # Calculate edge features
+                        bond_order = bond.GetBondTypeAsDouble()
+                        aromaticity = int(bond.GetIsAromatic())
+                        conjugation = int(bond.GetIsConjugated())
+                        ring = int(bond.IsInRing())
+                        stereochemistry_tag = bond.GetStereo()
+                        if stereochemistry_tag == BondStereo.STEREOZ:
+                            stereochemistry = 1
+                        elif stereochemistry_tag == BondStereo.STEREOE:
+                            stereochemistry = -1
+                        else:
+                            stereochemistry = 0
+                    else:
+                        bond_order, aromaticity, conjugation, ring, stereochemistry = 0, 0, 0, 0, 0
 
-    return np.array(node_features, dtype='float64'), np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
+                    if not bond and not non_convalent_edges: # if we don't want to include non-covalent edges and there is no bond between the atoms,
+                        continue # skip the edge
+                    
+                    # Append edge indices to list, duplicating to account for both directions
+                    edge_indices.append((atom1, atom2))
+                    edge_indices.append((atom2, atom1))
+
+                    # Append edge features to list, duplicating to account for both directions
+                    edge_features.append((bond_order, aromaticity, conjugation, ring, stereochemistry))
+                    edge_features.append((bond_order, aromaticity, conjugation, ring, stereochemistry))
+
+    return np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
+
+def add_charges_to_molecule(mol, charges):
+    if len(mol.GetAtoms()) != len(charges):
+        raise ValueError(f"The number of charges {len(charges)} does not match the number of atoms {len(mol.GetAtoms())} in the molecule.")
+    
+    for atom, charge in zip(mol.GetAtoms(), charges):
+        atom.SetDoubleProp('_TriposAtomCharges', charge)
+
+def rdkit_mol_featurizer(mol: Mol, 
+                         charges: list, 
+                         protein_or_ligand_ids: list = None, 
+                         num_atoms_in_protein: int = None,
+                         non_convalent_edges: bool = True,
+                         ) -> tuple: 
+    """
+    Extracts graph features from a given RDKit molecule object.
+    Parameters:
+        mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
+        protein_or_ligand_ids (list): A list of ints describing whether each atom in the molecule is a protein (-1) or a ligand (1) atom. 
+    Returns:
+        node_features (np.ndarray): A 2D array of shape (num_atoms, num_node_features) containing node features:
+            (protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization, chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons)
+        edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
+        edge_indices (np.ndarray): A 2D array of shape (num_bonds, 2) containing the indices of the atoms connected by each bond.
+    """
+
+    AssignStereochemistry(mol, force=True, cleanIt=True)
+
+    if not protein_or_ligand_ids:
+        protein_or_ligand_ids = [-1 if atom.GetIdx() < num_atoms_in_protein else 1 for atom in mol.GetAtoms()]
+
+    add_charges_to_molecule(mol, charges)
+
+    node_features = get_node_features(mol, protein_or_ligand_ids)
+    
+    pocket_atom_indices = find_pocket_atoms_RDKit(mol, protein_or_ligand_ids, num_atoms_in_protein)
+    pocket_node_features = [node_features[i] for i in pocket_atom_indices]
+
+    if non_convalent_edges:
+        edge_features, edge_indices = get_edge_features(mol, pocket_atom_indices)
+    else:
+        edge_features, edge_indices = None, None
+
+    return np.array(pocket_node_features, dtype='float64'), np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
