@@ -130,6 +130,7 @@ def get_node_features(mol: Mol,
             chirality = -1
         else:
             chirality = 0
+
         num_heteroatoms = len([bond for bond in atom.GetBonds() if bond.GetOtherAtom(atom).GetAtomicNum() != atom.GetAtomicNum()])
         degree = atom.GetDegree()
         num_hydrogens = atom.GetTotalNumHs()
@@ -175,7 +176,6 @@ def covalent_bonds(mol, atom_1, atom_2):
         bond_order, aromaticity, conjugation, ring, stereochemistry = 0, 0, 0, 0, 0
 
     return (bond_order, aromaticity, conjugation, ring, stereochemistry)
-
 
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
