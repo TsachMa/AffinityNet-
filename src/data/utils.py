@@ -4,7 +4,26 @@ import numpy as np
 from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
 from rdkit.Chem.AllChem import ComputeGasteigerCharges
 import os
-from pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
+
+import sys
+sys.path.append('../../')
+
+from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
+
+# Van der Waals radii for common elements (in pm)
+VDW_RADII = {
+    'H': 120, 'He': 140, 'Li': 182, 'Be': 153, 'B': 192, 'C': 170, 'N': 155,
+    'O': 152, 'F': 147, 'Ne': 154, 'Na': 227, 'Mg': 173, 'Al': 184, 'Si': 210,
+    'P': 180, 'S': 180, 'Cl': 175, 'Ar': 188, 'K': 275, 'Ca': 231, 'Sc': 211,
+    'Ti': 200, 'V': 200, 'Cr': 200, 'Mn': 200, 'Fe': 200, 'Co': 200, 'Ni': 163,
+    'Cu': 140, 'Zn': 139, 'Ga': 187, 'Ge': 211, 'As': 185, 'Se': 190, 'Br': 185,
+    'Kr': 202, 'Rb': 303, 'Sr': 249, 'Y': 200, 'Zr': 200, 'Nb': 200, 'Mo': 200,
+    'Tc': 200, 'Ru': 200, 'Rh': 200, 'Pd': 163, 'Ag': 172, 'Cd': 158, 'In': 193,
+    'Sn': 217, 'Sb': 206, 'Te': 206, 'I': 198, 'Xe': 216, 'Cs': 343, 'Ba': 268,
+}
+
+def get_vdw_radius(symbol):
+    return VDW_RADII.get(symbol, 200) / 100  # 200 is Default value for unknown elements, convert to Angstrom
 
 def pdb_to_rdkit_mol(pdb_filepath: str): 
 
@@ -172,10 +191,47 @@ def covalent_bonds(mol, atom_1, atom_2):
             stereochemistry = -1
         else:
             stereochemistry = 0
+        return (bond_order, aromaticity, conjugation, ring, stereochemistry)
     else:
-        bond_order, aromaticity, conjugation, ring, stereochemistry = 0, 0, 0, 0, 0
+        return None
 
-    return (bond_order, aromaticity, conjugation, ring, stereochemistry)
+def vdw_interactions(mol, atom_1, atom_2):
+    """
+    Determine if there is a van der Waals interaction between atom 1 and atom 2 based on whether the interatomic distance is less 
+    than or equal to the sum of the van der Waals radii of the two atoms.
+    
+    Parameters:
+    mol (Chem.Mol): The RDKit molecule.
+    atom_1 (int): The index of the first atom.
+    atom_2 (int): The index of the second atom.
+    
+    Returns:
+    tuple: (0, 0, 0, 0, 0) if there is a van der Waals interaction, None otherwise 
+    """
+
+    # Get the coordinates of the atoms
+    pos1 = np.array(mol.GetConformer().GetAtomPosition(atom_1))
+    pos2 = np.array(mol.GetConformer().GetAtomPosition(atom_2))
+
+    # Compute the distance between the two atoms
+    distance = np.linalg.norm(pos1 - pos2)
+
+    # Get the van der Waals radii of the two atoms
+    atom_1_symbol = mol.GetAtomWithIdx(atom_1).GetSymbol()
+    atom_2_symbol = mol.GetAtomWithIdx(atom_2).GetSymbol()
+    vdw_radius_1 = get_vdw_radius(atom_1_symbol)
+    vdw_radius_2 = get_vdw_radius(atom_2_symbol)
+
+    print(f"Distance: {distance}")
+    print(f"Sum of van der Waals radii: {vdw_radius_1 + vdw_radius_2}")
+    
+
+    # Check if the distance is less than or equal to the sum of the van der Waals radii
+    if distance <= (vdw_radius_1 + vdw_radius_2):
+        return (0, 0, 0, 0, 0)
+
+    return None
+
 
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
