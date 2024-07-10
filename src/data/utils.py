@@ -1,6 +1,7 @@
 from rdkit.Chem.rdmolfiles import MolFromPDBFile
 from rdkit.Chem.rdchem import Mol
 import numpy as np
+import rdkit.Chem as Chem
 from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
 from rdkit.Chem.AllChem import ComputeGasteigerCharges
 import os
@@ -9,6 +10,7 @@ import sys
 sys.path.append('../../')
 
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
+from src.utils.constants import ES_THRESHOLD
 
 # Van der Waals radii for common elements (in pm)
 VDW_RADII = {
@@ -120,7 +122,9 @@ def get_node_features(mol: Mol,
         node_features (np.ndarray): A 2D array of shape (num_atoms, num_node_features) containing node features:
             (protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization, chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons)
     """
+    
     node_features  = []
+
     # Iterate over each atom in the molecule and calculate node features
     for atom in mol.GetAtoms():
         protein_or_ligand_id = protein_or_ligand_ids[atom.GetIdx()] 
@@ -232,6 +236,64 @@ def vdw_interactions(mol, atom_1, atom_2):
 
     return None
 
+def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
+    """
+    Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the coulombic interaction
+    between the two atoms is less than or equal to some threshold imported from src/utils/constants.py.
+
+    Parameters:
+    mol (Chem.Mol): The RDKit molecule. NOTE: We assume that the molecule has _TriposAtomCharges charges assigned to the atoms.
+    atom_1 (int): The index of the first atom.
+    atom_2 (int): The index of the second atom.
+    
+    Returns:
+    tuple: (0, 0, 0, 0, 0) if there is an electrostatic interaction, None otherwise 
+
+    Conversion Factor Calculation:
+    The Coulombic interaction energy between two point charges q1 and q2 separated by a distance r in vacuum is given by:
+
+        E = k * q1 * q2 / r
+
+    Where:
+    - E is the energy in Joules (J).
+    - k is Coulomb's constant, 8.987 x 10^9 N m^2 C^-2.
+    - q1 and q2 are the charges in Coulombs (C).
+    - r is the distance in meters (m).
+
+    To convert this energy into kJ/mol, the following conversions are applied:
+    - 1 e (elementary charge) = 1.602 x 10^-19 C
+    - Avogadro's number (N_A) = 6.022 x 10^23 mol^-1
+    - 1 Angstrom (Å) = 10^-10 meters (m)
+
+    Therefore, the conversion factor from (charge_1 * charge_2) / distance to kJ/mol is:
+
+        Conversion factor = (k * N_A * (1.602 x 10^-19)^2) * 10^10
+
+    Plugging in the values:
+
+        Conversion factor = (8.987 x 10^9 * 6.022 x 10^23 * (1.602 x 10^-19)^2) * 10^10
+                          ≈ 1388.93 kJ mol^-1 Å^-1
+    """
+    # Constants
+    CONVERSION_FACTOR_KJ = 1388.93  # kJ mol^-1 Å^-1
+
+    # Get atomic charges using Gasteiger charges or another suitable method
+    charge_1 = float(mol.GetAtomWithIdx(atom_1).GetProp('_TriposAtomCharges'))
+    charge_2 = float(mol.GetAtomWithIdx(atom_2).GetProp('_TriposAtomCharges'))
+    
+    # Get the distance between the two atoms
+    conf = mol.GetConformer()
+    pos_1 = conf.GetAtomPosition(atom_1)
+    pos_2 = conf.GetAtomPosition(atom_2)
+    distance = pos_1.Distance(pos_2)
+
+    coulombic_interaction_kj = (charge_1 * charge_2 / distance) * CONVERSION_FACTOR_KJ
+
+    # Check if the Coulombic interaction is less than or equal to the threshold
+    if abs(coulombic_interaction_kj) >= ES_THRESHOLD:
+        return (0, 0, 0, 0, 0)
+    else:
+        return None
 
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
