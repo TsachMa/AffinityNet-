@@ -142,11 +142,27 @@ def get_node_features(mol: Mol,
 
     return np.array(node_features, dtype='float64')
 
+def covalent_bonds(mol, atom_1, atom_2):
+    """
+    Determine if there is a covalent bond between two specified atoms in a molecule.
+    
+    Parameters:
+    mol (Chem.Mol): The RDKit molecule.
+    atom_1 (int): The index of the first atom.
+    atom_2 (int): The index of the second atom.
+    
+    Returns:
+    bool: True if there is a covalent bond between atom_1 and atom_2, False otherwise.
+    """
+    bond = mol.GetBondBetweenAtoms(atom_1, atom_2)
+    return bond is not None
+
 
 
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
-                      non_convalent_edges: bool = True) -> tuple:
+                      non_convalent_edges: bool = True,
+                      pairwise_function) -> tuple:
     """
     Extracts edge features from a given RDKit molecule object.
     Parameters:
