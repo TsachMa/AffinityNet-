@@ -176,57 +176,47 @@ def covalent_bonds(mol, atom_1, atom_2):
 
     return (bond_order, aromaticity, conjugation, ring, stereochemistry)
 
+
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
-                      non_convalent_edges: bool = True,
-                      pairwise_function) -> tuple:
+                      pairwise_function: callable,
+                      ) -> tuple:
     """
+
     Extracts edge features from a given RDKit molecule object.
     Parameters:
         mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
+        pocket_atom_indices (list): A list of ints containing the indices of the atoms in the pocket.
+        pairwise_function (callable): A function that takes two atoms and returns edge features.
+
+
     Returns:
         edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
         edge_indices (np.ndarray): A 2D array of shape (num_bonds, 2) containing the indices of the atoms connected by each bond.
+    
     """
+
     # Initialize a list to store edge features and indices
     edge_indices, edge_features = [], []
+
     #for every atom in the pocket, create an edge between atoms if they are within 4 angstroms of each other
     for i, atom1 in enumerate(pocket_atom_indices):
         atom_i = mol.GetAtomWithIdx(atom1)
+
         for j, atom2 in enumerate(pocket_atom_indices):
             atom_j = mol.GetAtomWithIdx(atom2)
+
             if j > i: #only consider the upper triangle of the matrix
-                distance = np.linalg.norm(get_atom_coordinates(atom_i) - get_atom_coordinates(atom_j))
-                if distance < 4.0:
-                    #check if there is a bond between the two atoms
-                    bond = mol.GetBondBetweenAtoms(atom1, atom2)
+                i_j_edge_features = pairwise_function(mol, atom1, atom2)
 
-                    if bond: 
-                        # Calculate edge features
-                        bond_order = bond.GetBondTypeAsDouble()
-                        aromaticity = int(bond.GetIsAromatic())
-                        conjugation = int(bond.GetIsConjugated())
-                        ring = int(bond.IsInRing())
-                        stereochemistry_tag = bond.GetStereo()
-                        if stereochemistry_tag == BondStereo.STEREOZ:
-                            stereochemistry = 1
-                        elif stereochemistry_tag == BondStereo.STEREOE:
-                            stereochemistry = -1
-                        else:
-                            stereochemistry = 0
-                    else:
-                        bond_order, aromaticity, conjugation, ring, stereochemistry = 0, 0, 0, 0, 0
-
-                    if not bond and not non_convalent_edges: # if we don't want to include non-covalent edges and there is no bond between the atoms,
-                        continue # skip the edge
-                    
+                if i_j_edge_features:
                     # Append edge indices to list, duplicating to account for both directions
                     edge_indices.append((atom1, atom2))
                     edge_indices.append((atom2, atom1))
 
                     # Append edge features to list, duplicating to account for both directions
-                    edge_features.append((bond_order, aromaticity, conjugation, ring, stereochemistry))
-                    edge_features.append((bond_order, aromaticity, conjugation, ring, stereochemistry))
+                    edge_features.append(i_j_edge_features)
+                    edge_features.append(i_j_edge_features)
 
     return np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
 
