@@ -144,7 +144,7 @@ def get_node_features(mol: Mol,
 
 def covalent_bonds(mol, atom_1, atom_2):
     """
-    Determine if there is a covalent bond between two specified atoms in a molecule.
+    Determine if there is a covalent bond between two specified atoms in a molecule and get bond features.
     
     Parameters:
     mol (Chem.Mol): The RDKit molecule.
@@ -152,12 +152,29 @@ def covalent_bonds(mol, atom_1, atom_2):
     atom_2 (int): The index of the second atom.
     
     Returns:
-    bool: True if there is a covalent bond between atom_1 and atom_2, False otherwise.
+    tuple: A tuple containing bond order, aromaticity, conjugation, ring, and stereochemistry.
+           If there is no bond, returns (0, 0, 0, 0, 0).
     """
     bond = mol.GetBondBetweenAtoms(atom_1, atom_2)
-    return bond is not None
 
+    if bond: 
+        # Calculate edge features
+        bond_order = bond.GetBondTypeAsDouble()
+        aromaticity = int(bond.GetIsAromatic())
+        conjugation = int(bond.GetIsConjugated())
+        ring = int(bond.IsInRing())
+        stereochemistry_tag = bond.GetStereo()
+        
+        if stereochemistry_tag == BondStereo.STEREOZ:
+            stereochemistry = 1
+        elif stereochemistry_tag == BondStereo.STEREOE:
+            stereochemistry = -1
+        else:
+            stereochemistry = 0
+    else:
+        bond_order, aromaticity, conjugation, ring, stereochemistry = 0, 0, 0, 0, 0
 
+    return (bond_order, aromaticity, conjugation, ring, stereochemistry)
 
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
