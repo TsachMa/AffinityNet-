@@ -5,7 +5,7 @@ import rdkit.Chem as Chem
 from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
 from rdkit.Chem.AllChem import ComputeGasteigerCharges
 import os
-
+from tqdm import tqdm
 import sys
 sys.path.append('../../')
 
@@ -347,7 +347,6 @@ def add_charges_to_molecule(mol, charges):
 
 def rdkit_mol_featurizer(mol: Mol, 
                          charges: list, 
-                         protein_or_ligand_ids: list = None, 
                          num_atoms_in_protein: int = None,
                          non_convalent_edges: bool = True,
                          ) -> tuple: 
@@ -365,8 +364,7 @@ def rdkit_mol_featurizer(mol: Mol,
 
     AssignStereochemistry(mol, force=True, cleanIt=True)
 
-    if not protein_or_ligand_ids:
-        protein_or_ligand_ids = [-1 if atom.GetIdx() < num_atoms_in_protein else 1 for atom in mol.GetAtoms()]
+    protein_or_ligand_ids = [-1 if atom.GetIdx() < num_atoms_in_protein else 1 for atom in mol.GetAtoms()]
 
     add_charges_to_molecule(mol, charges)
 
