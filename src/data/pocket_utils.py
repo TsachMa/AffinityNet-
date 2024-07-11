@@ -7,6 +7,9 @@ from tqdm import tqdm
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
+import sys
+sys.path.append('../../')
+from src.utils.constants import POCKET_THRESHOLD
 
 def read_molecule(filename):
     """Read a molecule from a file."""
@@ -48,7 +51,7 @@ def find_pocket_atoms_RDKit(mol: Chem.Mol, protein_or_ligand_ids: list, num_atom
     ligand_centroid = np.mean(ligand_coords, axis=0)
     
     # Compute the maximum distance from the centroid to any ligand atom
-    max_distance = max(np.linalg.norm(ligand_coords - ligand_centroid, axis=1)) + 4.0  # Adding 4 Å to the max distance
+    max_distance = max(np.linalg.norm(ligand_coords - ligand_centroid, axis=1)) + POCKET_THRESHOLD  # Adding 4 Å to the max distance
 
     pocket_atom_indices = set(ligand_atom_indices)
 
