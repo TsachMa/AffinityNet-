@@ -1,16 +1,17 @@
 from rdkit.Chem.rdmolfiles import MolFromPDBFile
 from rdkit.Chem.rdchem import Mol
+from rdkit.Chem import AllChem
+
 import numpy as np
 import rdkit.Chem as Chem
 from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
 from rdkit.Chem.AllChem import ComputeGasteigerCharges
 import os
-from tqdm import tqdm
 import sys
-sys.path.append('../../')
-
+sys.path.append("../../")
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
-from src.utils.constants import ES_THRESHOLD, VDW_RADII, METAL_OX_STATES
+from src.data.utils import pdb_to_rdkit_mol, mol2_to_rdkit_mol, get_vdw_radius, add_charges_to_molecule, get_node_features, get_edge_features, extract_charges_from_mol2
+from src.utils.constants import ES_THRESHOLD
 
 def get_vdw_radius(symbol):
     return VDW_RADII.get(symbol, 200) / 100  # 200 is Default value for unknown elements, convert to Angstrom
@@ -224,11 +225,10 @@ def vdw_interactions(mol, atom_1, atom_2):
 
     return None
 
-def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
+def ionic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
     """
     Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the coulombic interaction
-    between the two atoms is less than or equal to some threshold imported from src/utils/constants.py. Note that we exclude all 
-    hydrogen atoms from this process. 
+    between the two atoms is less than or equal to some threshold imported from src/utils/constants.py.
 
     Parameters:
     mol (Chem.Mol): The RDKit molecule. NOTE: We assume that the molecule has _TriposAtomCharges charges assigned to the atoms.
@@ -263,22 +263,13 @@ def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int)
         Conversion factor = (8.987 x 10^9 * 6.022 x 10^23 * (1.602 x 10^-19)^2) * 10^10
                           ≈ 1388.93 kJ mol^-1 Å^-1
     """
-
-    # Check if the atoms are hydrogen
-    is_hydrogen_1 = mol.GetAtomWithIdx(atom_1).GetAtomicNum() == 1
-    is_hydrogen_2 = mol.GetAtomWithIdx(atom_2).GetAtomicNum() == 1
-
-    # If either atom is hydrogen, return None
-    if is_hydrogen_1 or is_hydrogen_2:
-        return None
-    
     # Constants
     CONVERSION_FACTOR_KJ = 1388.93  # kJ mol^-1 Å^-1
 
     # Get atomic charges using Gasteiger charges or another suitable method
     charge_1 = float(mol.GetAtomWithIdx(atom_1).GetProp('_TriposAtomCharges'))
     charge_2 = float(mol.GetAtomWithIdx(atom_2).GetProp('_TriposAtomCharges'))
-         
+    
     # Get the distance between the two atoms
     conf = mol.GetConformer()
     pos_1 = conf.GetAtomPosition(atom_1)
@@ -292,7 +283,7 @@ def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int)
         return (0, 0, 0, 0, 0, coulombic_interaction_kj)
     else:
         return None
-
+    
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
                       pairwise_function: callable,
