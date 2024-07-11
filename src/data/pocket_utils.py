@@ -2,6 +2,11 @@ from openbabel import openbabel
 from openbabel import pybel
 import numpy as np
 from rdkit.Chem import Mol
+from tqdm import tqdm 
+
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
 
 def read_molecule(filename):
     """Read a molecule from a file."""
@@ -32,24 +37,35 @@ def get_atom_coordinates(mol):
         coords.append((pos.x, pos.y, pos.z))
     return np.array(coords)
 
-def find_pocket_atoms_RDKit(mol : Mol,
-                            protein_or_ligand_ids: list,
-                            num_atoms_in_protein):
+def find_pocket_atoms_RDKit(mol: Chem.Mol, protein_or_ligand_ids: list, num_atoms_in_protein):
+    # Identify ligand atoms
+    ligand_atom_indices = [atom.GetIdx() for atom in mol.GetAtoms() if protein_or_ligand_ids[atom.GetIdx()] == 1]
+    
+    # Get coordinates of ligand atoms
+    ligand_coords = get_atom_coordinates(mol)[num_atoms_in_protein:]
+    
+    # Compute the centroid of the ligand atoms
+    ligand_centroid = np.mean(ligand_coords, axis=0)
+    
+    # Compute the maximum distance from the centroid to any ligand atom
+    max_distance = max(np.linalg.norm(ligand_coords - ligand_centroid, axis=1)) + 4.0  # Adding 4 Å to the max distance
 
-    #identify the pocket atoms
-    #first, add all of the ligand atoms 
-    pocket_atom_indices = [atom.GetIdx() for atom in mol.GetAtoms() if protein_or_ligand_ids[atom.GetIdx()] == 1]
-   
-    #add the protein atoms that are within 4 angstroms of the ligand atoms
-    for l_atom in list(mol.GetAtoms())[num_atoms_in_protein:]: #loop over all of the ligand atoms 
-        for p_atom in list(mol.GetAtoms())[:num_atoms_in_protein]: #loop over all of the protein atoms 
-            distance = np.linalg.norm(get_atom_coordinates(mol)[l_atom.GetIdx()] - get_atom_coordinates(mol)[p_atom.GetIdx()])
+    pocket_atom_indices = set(ligand_atom_indices)
 
-            if distance < 4.0: # 4 angstroms 
-                #if the index is not already in the pocket atom indices, add it
-                if p_atom.GetIdx() not in pocket_atom_indices:
-                    pocket_atom_indices.append(p_atom.GetIdx())
-    return pocket_atom_indices
+    # Get coordinates of all atoms
+    all_coords = get_atom_coordinates(mol)
+    
+    # Loop over protein atoms and check if they are within the bounding sphere
+    for p_atom in tqdm(mol.GetAtoms()):
+        p_idx = p_atom.GetIdx()
+        if p_idx >= num_atoms_in_protein:  # Skip ligand atoms
+            continue
+        
+        distance_to_centroid = np.linalg.norm(all_coords[p_idx] - ligand_centroid)
+        if distance_to_centroid <= max_distance:
+            pocket_atom_indices.add(p_idx)
+                    
+    return list(pocket_atom_indices)
 
 def save_pocket_atoms(pocket_atoms, output_filename):
     """Save the pocket atoms to a PDB file."""
