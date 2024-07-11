@@ -10,19 +10,7 @@ import sys
 sys.path.append('../../')
 
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
-from src.utils.constants import ES_THRESHOLD
-
-# Van der Waals radii for common elements (in pm)
-VDW_RADII = {
-    'H': 120, 'He': 140, 'Li': 182, 'Be': 153, 'B': 192, 'C': 170, 'N': 155,
-    'O': 152, 'F': 147, 'Ne': 154, 'Na': 227, 'Mg': 173, 'Al': 184, 'Si': 210,
-    'P': 180, 'S': 180, 'Cl': 175, 'Ar': 188, 'K': 275, 'Ca': 231, 'Sc': 211,
-    'Ti': 200, 'V': 200, 'Cr': 200, 'Mn': 200, 'Fe': 200, 'Co': 200, 'Ni': 163,
-    'Cu': 140, 'Zn': 139, 'Ga': 187, 'Ge': 211, 'As': 185, 'Se': 190, 'Br': 185,
-    'Kr': 202, 'Rb': 303, 'Sr': 249, 'Y': 200, 'Zr': 200, 'Nb': 200, 'Mo': 200,
-    'Tc': 200, 'Ru': 200, 'Rh': 200, 'Pd': 163, 'Ag': 172, 'Cd': 158, 'In': 193,
-    'Sn': 217, 'Sb': 206, 'Te': 206, 'I': 198, 'Xe': 216, 'Cs': 343, 'Ba': 268,
-}
+from src.utils.constants import ES_THRESHOLD, VDW_RADII, METAL_OX_STATES
 
 def get_vdw_radius(symbol):
     return VDW_RADII.get(symbol, 200) / 100  # 200 is Default value for unknown elements, convert to Angstrom
@@ -290,7 +278,7 @@ def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int)
     # Get atomic charges using Gasteiger charges or another suitable method
     charge_1 = float(mol.GetAtomWithIdx(atom_1).GetProp('_TriposAtomCharges'))
     charge_2 = float(mol.GetAtomWithIdx(atom_2).GetProp('_TriposAtomCharges'))
-    
+         
     # Get the distance between the two atoms
     conf = mol.GetConformer()
     pos_1 = conf.GetAtomPosition(atom_1)
@@ -353,6 +341,11 @@ def add_charges_to_molecule(mol, charges):
         raise ValueError(f"The number of charges {len(charges)} does not match the number of atoms {len(mol.GetAtoms())} in the molecule.")
     
     for atom, charge in zip(mol.GetAtoms(), charges):
+        #check if the atom is a metal 
+        if atom.GetSymbol() in METAL_OX_STATES.keys():
+            print(atom.GetSymbol())
+            charge = METAL_OX_STATES[atom.GetSymbol()] 
+        
         atom.SetDoubleProp('_TriposAtomCharges', charge)
 
 def rdkit_mol_featurizer(mol: Mol, 
