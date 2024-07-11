@@ -10,8 +10,7 @@ import os
 import sys
 sys.path.append("../../")
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
-from src.data.utils import pdb_to_rdkit_mol, mol2_to_rdkit_mol, get_vdw_radius, add_charges_to_molecule, get_node_features, get_edge_features, extract_charges_from_mol2
-from src.utils.constants import ES_THRESHOLD
+from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES
 
 def get_vdw_radius(symbol):
     return VDW_RADII.get(symbol, 200) / 100  # 200 is Default value for unknown elements, convert to Angstrom
@@ -87,6 +86,10 @@ def extract_charges_from_mol2(file_path):
         if in_atom_section:
             # Split line by whitespace
             parts = line.split()
+
+            #check if the atom is a hydrogen 
+            if parts[5] == 'H':
+                continue            
             
             # Extract charge from the line (assuming it's the last column)
             if len(parts) >= 9:  # Ensure there are enough columns
@@ -116,6 +119,7 @@ def get_node_features(mol: Mol,
 
     # Iterate over each atom in the molecule and calculate node features
     for atom in mol.GetAtoms():
+
         protein_or_ligand_id = protein_or_ligand_ids[atom.GetIdx()] 
         
         # Calculate node features
