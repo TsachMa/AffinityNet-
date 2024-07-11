@@ -1,13 +1,10 @@
 import os
 from chimerax.core.commands import run
 
-# Change to folder with data files
-#os.chdir("/Users/tsachmackey/dfs/affinity_net/PDBbind/v2020-other-PL")
-
-directories = ['test_data/pdb']
-
+directories = ['/Users/tsachmackey/dfs/affinity_net/PDBbind/v2020-other-PL']
+counter = 0 
 for directory in directories:
-    print( sorted(list(os.listdir(directory))))
+    print(sorted(list(os.listdir(directory))))
     for sub_dir in sorted(list(os.listdir(directory))):
         #check subdir is a directory 
         if os.path.isdir(os.path.join(directory, sub_dir)): 
@@ -47,3 +44,6 @@ for directory in directories:
 
                     # Close all opened models
                     run(session, "close session")
+
+                    counter += 1
+                    print(f"Processed {counter} files")
