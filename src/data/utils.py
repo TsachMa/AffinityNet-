@@ -11,6 +11,7 @@ import sys
 sys.path.append("../../")
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
 from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES
+from tqdm import tqdm 
 
 def get_vdw_radius(symbol):
     return VDW_RADII.get(symbol, 200) / 100  # 200 is Default value for unknown elements, convert to Angstrom
@@ -269,6 +270,10 @@ def ionic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
     """
     # Constants
     CONVERSION_FACTOR_KJ = 1388.93  # kJ mol^-1 Å^-1
+
+    #Ensure that the atoms are not covanlently bonded
+    if mol.GetBondBetweenAtoms(atom_1, atom_2):
+        return None
 
     # Get atomic charges using Gasteiger charges or another suitable method
     charge_1 = float(mol.GetAtomWithIdx(atom_1).GetProp('_TriposAtomCharges'))
