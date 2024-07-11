@@ -239,7 +239,8 @@ def vdw_interactions(mol, atom_1, atom_2):
 def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
     """
     Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the coulombic interaction
-    between the two atoms is less than or equal to some threshold imported from src/utils/constants.py.
+    between the two atoms is less than or equal to some threshold imported from src/utils/constants.py. Note that we exclude all 
+    hydrogen atoms from this process. 
 
     Parameters:
     mol (Chem.Mol): The RDKit molecule. NOTE: We assume that the molecule has _TriposAtomCharges charges assigned to the atoms.
@@ -274,6 +275,15 @@ def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int)
         Conversion factor = (8.987 x 10^9 * 6.022 x 10^23 * (1.602 x 10^-19)^2) * 10^10
                           ≈ 1388.93 kJ mol^-1 Å^-1
     """
+
+    # Check if the atoms are hydrogen
+    is_hydrogen_1 = mol.GetAtomWithIdx(atom_1).GetAtomicNum() == 1
+    is_hydrogen_2 = mol.GetAtomWithIdx(atom_2).GetAtomicNum() == 1
+
+    # If either atom is hydrogen, return None
+    if is_hydrogen_1 or is_hydrogen_2:
+        return None
+    
     # Constants
     CONVERSION_FACTOR_KJ = 1388.93  # kJ mol^-1 Å^-1
 
@@ -291,7 +301,7 @@ def determine_electrostatic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int)
 
     # Check if the Coulombic interaction is less than or equal to the threshold
     if abs(coulombic_interaction_kj) >= ES_THRESHOLD:
-        return (0, 0, 0, 0, 0)
+        return (0, 0, 0, 0, 0, coulombic_interaction_kj)
     else:
         return None
 
@@ -318,7 +328,7 @@ def get_edge_features(mol: Mol,
     edge_indices, edge_features = [], []
 
     #for every atom in the pocket, create an edge between atoms if they are within 4 angstroms of each other
-    for i, atom1 in enumerate(pocket_atom_indices):
+    for i, atom1 in tqdm(enumerate(pocket_atom_indices)):
         atom_i = mol.GetAtomWithIdx(atom1)
 
         for j, atom2 in enumerate(pocket_atom_indices):
