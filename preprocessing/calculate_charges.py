@@ -5,6 +5,12 @@ import argparse
 from tqdm import tqdm 
 
 def add_mol2_charges(complex_mol2_file):
+    output_filename = complex_mol2_file.replace('.mol2', '_charged.mol2')
+
+    if os.path.exists(output_filename):
+        print(f"Charges already added to '{output_filename}'.")
+        return
+
     # Upload the pocket mol2 file to the ACC2 API
     r = requests.post('https://acc2-api.biodata.ceitec.cz/send_files', files={'file[]': open(complex_mol2_file, 'rb')})
     
@@ -22,7 +28,6 @@ def add_mol2_charges(complex_mol2_file):
     if r_out.status_code != 200:
         raise Exception(f"Failed to calculate charges. Status code: {r_out.status_code}, Response: {r_out.text}")
     
-    output_filename = complex_mol2_file.replace('.mol2', '_charged.mol2')
     # Save output mol2 file
     with open(output_filename, 'wb') as f:
         f.write(r_out.content)
@@ -39,13 +44,14 @@ def main():
     # general_set_PDBs_path = os.path.join(args.PDB_data_path, 'v2020-other-PL')
     # directories = [PDBbind_data_path, general_set_PDBs_path]
 
-    directories = ['test_data/pdb']
+    directories = ['/Users/tsachmackey/dfs/affinity_net/PDBbind/v2020-other-PL']
 
     for directory in directories:
         subdirs = [sub_dir for sub_dir in os.listdir(directory) if os.path.isdir(os.path.join(directory, sub_dir))]
         print(subdirs)
         for sub_dir in tqdm(subdirs):
             for file in os.listdir(os.path.join(directory, sub_dir)):
+                #1a0q_complex_spheroid_pocket_residues.pdb
                 if file.endswith('complex.mol2'):
                     complex_mol2_file = os.path.join(directory, sub_dir, file)
                     add_mol2_charges(complex_mol2_file)

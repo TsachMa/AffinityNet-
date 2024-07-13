@@ -1,8 +1,12 @@
 import os
 from chimerax.core.commands import run
 
-directories = ['/Users/tsachmackey/dfs/affinity_net/PDBbind/v2020-other-PL']
+#directories = ['/Users/tsachmackey/dfs/affinity_net/PDBbind/v2020-other-PL']
+directories = ['test_data/pdb/']
 counter = 0 
+
+CHIMERA_CONVERT_TO_MOL2 = True
+
 for directory in directories:
     print(sorted(list(os.listdir(directory))))
     for sub_dir in sorted(list(os.listdir(directory))):
@@ -19,16 +23,20 @@ for directory in directories:
                     #delete solvent
                     run(session, "delete solvent")
 
-                    # Convert to mol2
-                    protein_mol2 = name.replace(".pdb", ".mol2")
-                    run(session, f"save {protein_mol2}")
+                    # if CHIMERA_CONVERT_TO_MOL2:
+                    #     # Convert to mol2
+                    #     protein = name.replace(".pdb", ".mol2")
+                    #     run(session, f"save {protein}")
+                    # else:
+                    #     protein = name.replace(".pdb", "_addH.pdb")
+                    #     run(session, f"save {protein}")
 
-                    # Close all opened models
-                    run(session, "close session")
+                    # # Close all opened models
+                    # run(session, "close session")
                     
                     ligand_mol2 =  name.replace("_protein.pdb", "_ligand.mol2")
 
-                    run(session, f"open {protein_mol2}")
+                    # run(session, f"open {protein}")
                     run(session, f"open {ligand_mol2}")
 
                     run(session, 'combine #0 #1 #2')
@@ -37,10 +45,22 @@ for directory in directories:
                     for idx, model in enumerate(models):
                         print(f"Model #{idx}: {model.name}, Type: {type(model)}")
 
-                    # Convert to mol2
-                    complex_mol2 = name.replace("_protein.pdb", "_complex.mol2")
+                    run(session, "close #0,1,2,3")  # Closes models with IDs 1, 2, and 3
 
-                    run(session, f"save {complex_mol2} #3 #4")
+                    if CHIMERA_CONVERT_TO_MOL2:
+                        # Convert to mol2
+                        complex = name.replace("_protein.pdb", "_complex.mol2")
+                    else:
+                        complex = name.replace("_protein.pdb", "_complex.pdb")
+
+                    # Calculate AMBER charges for the combined complex
+                    run(session, "addcharge method am1-bcc")
+
+                    models = session.models.list()
+                    for idx, model in enumerate(models):
+                        print(f"Model #{idx}: {model.name}, Type: {type(model)}")
+
+                    run(session, f"save {complex} #4")
 
                     # Close all opened models
                     run(session, "close session")
