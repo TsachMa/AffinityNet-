@@ -1,95 +1,77 @@
 import os
-import sys
-from multiprocessing import Pool, cpu_count, Manager
 from chimerax.core.commands import run
+import argparse
+import sys
 
-def process_file(file_path, failed_files):
-    global counter
-    CHIMERA_CONVERT_TO_MOL2 = True
+import os
 
-    try:
-        run(session, f"open {file_path}")
+PDB_DIRECTORY = 'test_data/pdb/'
+CHIMERA_CONVERT_TO_MOL2 = True
+CHECKPOINTING = True 
+LOG_ERRORS = True
+PARALLEL = True 
 
-        # Add hydrogens
-        run(session, "addh")
+if LOG_ERRORS:
+    error_log = open("error_log.txt", "w")
 
-        # Delete solvent
-        run(session, "delete solvent")
+counter = 0
 
-        ligand_mol2 = file_path.replace("_protein.pdb", "_ligand.mol2")
+for sub_dir in os.listdir(PDB_DIRECTORY):
+    if os.path.isdir(os.path.join(PDB_DIRECTORY, sub_dir)):
+        for name in os.listdir(os.path.join(PDB_DIRECTORY, sub_dir)):
+            
+            name = os.path.join(PDB_DIRECTORY, sub_dir, name)
+            
+            if name.endswith("_protein.pdb"):
 
-        run(session, f"open {ligand_mol2}")
+                try: 
+                    if CHECKPOINTING:
+                        if os.path.exists(name.replace("_protein.pdb", "_complex.mol2")):
+                            print(f"Skipping {name}")
+                            continue
 
-        run(session, 'combine #0 #1')
+                    run(session, f"open {name}")
 
-        models = session.models.list()
-        for idx, model in enumerate(models):
-            print(f"Model #{idx}: {model.name}, Type: {type(model)}")
+                    # Add hydrogens
+                    run(session, "addh")
 
-        if CHIMERA_CONVERT_TO_MOL2:
-            # Convert to mol2
-            complex = file_path.replace("_protein.pdb", "_complex.mol2")
-        else:
-            complex = file_path.replace("_protein.pdb", "_complex.pdb")
+                    #delete solvent
+                    run(session, "delete solvent")
+                    
+                    ligand_mol2 =  name.replace("_protein.pdb", "_ligand.mol2")
 
-        # Calculate AMBER charges for the combined complex
-        run(session, "addcharge method am1-bcc")
+                    # run(session, f"open {protein}")
+                    run(session, f"open {ligand_mol2}")
 
-        models = session.models.list()
-        for idx, model in enumerate(models):
-            print(f"Model #{idx}: {model.name}, Type: {type(model)}")
+                    run(session, 'combine #0 #1 #2')
 
-        run(session, f"save {complex} #3")
+                    models = session.models.list()
+                    for idx, model in enumerate(models):
+                        print(f"Model #{idx}: {model.name}, Type: {type(model)}")
 
-        # Close all opened models
-        run(session, "close session")
+                    if CHIMERA_CONVERT_TO_MOL2:
+                        # Convert to mol2
+                        complex = name.replace("_protein.pdb", "_complex.mol2")
+                    else:
+                        complex = name.replace("_protein.pdb", "_complex.pdb")
 
-        counter += 1
-        print(f"Processed {counter} files")
-        
-    except Exception as e:
-        print(f"An error occurred while processing {file_path}: {e}")
-        failed_files.append(file_path)
-        run(session, "close all")
+                    # Calculate AMBER charges for the combined complex
+                    run(session, "addcharge method am1-bcc")
 
-def process_directory(directory):
-    files = []
-    for sub_dir in sorted(os.listdir(directory)):
-        sub_dir_path = os.path.join(directory, sub_dir)
-        if os.path.isdir(sub_dir_path):
-            for name in os.listdir(sub_dir_path):
-                if name.endswith("_protein.pdb"):
-                    file_path = os.path.join(sub_dir_path, name)
-                    files.append(file_path)
-    return files
+                    models = session.models.list()
+                    for idx, model in enumerate(models):
+                        print(f"Model #{idx}: {model.name}, Type: {type(model)}")
 
-def process_file_wrapper(args):
-    process_file(*args)
+                    run(session, f"save {complex} #3")
 
-if __name__ == "__main__":
-    from chimerax.core.session import Session
-    session = Session()
+                    # Close all opened models
+                    run(session, "close session")
 
-    directories = sys.argv[1:]
-    all_files = []
-    for directory in directories:
-        all_files.extend(process_directory(directory))
+                    counter += 1
+                    print(f"Processed {counter} files")
 
-    num_cores = cpu_count()
+                except Exception as e:
+                    print(f"Error processing {name}: {e}")
+                    error_log.write(f"Error processing {name}: {e}\n")
 
-    # Use Manager to keep track of failed files
-    with Manager() as manager:
-        failed_files = manager.list()
-        pool = Pool(num_cores)
-
-        # Use a wrapper to pass the shared list to the pool workers
-        pool.map(process_file_wrapper, [(file, failed_files) for file in all_files])
-
-        pool.close()
-        pool.join()
-
-        # Print the list of failed files
-        if failed_files:
-            print("The following files were not successfully processed:")
-            for file in failed_files:
-                print(file)
+run(session, "quit")
