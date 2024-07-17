@@ -10,7 +10,7 @@ import os
 import sys
 sys.path.append("../../")
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
-from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES, ES_DIST_THRESHOLD
+from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES, ES_DIST_THRESHOLD, VDW_RADII
 from tqdm import tqdm 
 
 def get_vdw_radius(symbol):
@@ -103,63 +103,6 @@ def extract_charges_from_mol2(file_path):
 
     return charges
 
-def get_node_features(mol: Mol,
-                        protein_or_ligand_ids: list = None) -> np.ndarray:
-    """
-    Extracts node features from a given RDKit molecule object.
-    Parameters:
-
-        mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
-        protein_or_ligand_ids (list): A list of ints describing whether each atom in the molecule is a protein (-1) or a ligand (1) atom.
-    Returns:
-        node_features (np.ndarray): A 2D array of shape (num_atoms, num_node_features) containing node features:
-            (protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization, chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons)
-    """
-    
-    node_features  = []
-
-    # Iterate over each atom in the molecule and calculate node features
-    for atom in mol.GetAtoms():
-
-        protein_or_ligand_id = protein_or_ligand_ids[atom.GetIdx()] 
-        
-        # Calculate node features
-        atomic_num = atom.GetAtomicNum()
-        atomic_mass = atom.GetMass()
-        aromatic_indicator = int(atom.GetIsAromatic())
-        ring_indicator = int(atom.IsInRing())
-        hybridization_tag = atom.GetHybridization()
-        if hybridization_tag == HybridizationType.SP:
-            hybridization = 1
-        elif hybridization_tag == HybridizationType.SP2:
-            hybridization = 2
-        elif hybridization_tag == HybridizationType.SP3:
-            hybridization = 3
-        else:
-            hybridization = 0
-
-        chiral_tag = atom.GetChiralTag()
-
-        if chiral_tag == ChiralType.CHI_TETRAHEDRAL_CW:
-            chirality = 1
-
-        elif chiral_tag == ChiralType.CHI_TETRAHEDRAL_CCW:
-            chirality = -1
-        else:
-            chirality = 0
-
-        num_heteroatoms = len([bond for bond in atom.GetBonds() if bond.GetOtherAtom(atom).GetAtomicNum() != atom.GetAtomicNum()])
-        degree = atom.GetDegree()
-        num_hydrogens = atom.GetTotalNumHs()
-        partial_charge = atom.GetDoubleProp('_TriposAtomCharges')
-        formal_charge = atom.GetFormalCharge()
-        num_radical_electrons = atom.GetNumRadicalElectrons()
-        # Append node features to list
-        node_features.append((protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization,
-        chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons))
-
-    return np.array(node_features, dtype='float64')
-
 def covalent_bonds(mol, atom_1, atom_2):
     """
     Determine if there is a covalent bond between two specified atoms in a molecule and get bond features.
@@ -219,10 +162,6 @@ def vdw_interactions(mol, atom_1, atom_2):
     atom_2_symbol = mol.GetAtomWithIdx(atom_2).GetSymbol()
     vdw_radius_1 = get_vdw_radius(atom_1_symbol)
     vdw_radius_2 = get_vdw_radius(atom_2_symbol)
-
-    print(f"Distance: {distance}")
-    print(f"Sum of van der Waals radii: {vdw_radius_1 + vdw_radius_2}")
-    
 
     # Check if the distance is less than or equal to the sum of the van der Waals radii
     if distance <= (vdw_radius_1 + vdw_radius_2):
@@ -323,9 +262,9 @@ def ionic_interaction_using_distance(mol: Chem.Mol, atom_1: int, atom_2: int):
         return None
     
 def get_edge_features(mol: Mol,
-                      pocket_atom_indices: list,
-                      pairwise_function: callable,
+                    pairwise_function: callable,
                       ) -> tuple:
+    
     """
 
     Extracts edge features from a given RDKit molecule object.
@@ -333,7 +272,6 @@ def get_edge_features(mol: Mol,
         mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
         pocket_atom_indices (list): A list of ints containing the indices of the atoms in the pocket.
         pairwise_function (callable): A function that takes two atoms and returns edge features.
-
 
     Returns:
         edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
@@ -345,13 +283,16 @@ def get_edge_features(mol: Mol,
     edge_indices, edge_features = [], []
 
     #for every atom in the pocket, create an edge between atoms if they are within 4 angstroms of each other
-    for i, atom1 in tqdm(enumerate(pocket_atom_indices)):
+    for i, atom1 in tqdm(enumerate(range(mol.GetNumAtoms()))):
+    
         atom_i = mol.GetAtomWithIdx(atom1)
 
-        for j, atom2 in enumerate(pocket_atom_indices):
+        for j, atom2 in tqdm(enumerate(range(mol.GetNumAtoms()))):
+    
             atom_j = mol.GetAtomWithIdx(atom2)
 
             if j > i: #only consider the upper triangle of the matrix
+    
                 i_j_edge_features = pairwise_function(mol, atom1, atom2)
 
                 if i_j_edge_features:
@@ -378,10 +319,67 @@ def add_charges_to_molecule(mol, charges):
         
         atom.SetDoubleProp('_TriposAtomCharges', charge)
 
+def get_node_features(mol: Mol) -> np.ndarray:
+    """
+    Extracts node features from a given RDKit molecule object.
+    Parameters:
+
+        mol (rdkit.Chem.rdchem.Mol): RDKit molecule object. It should have a "protein_or_ligand" property for each atom
+
+    Returns:
+        node_features (np.ndarray): A 2D array of shape (num_atoms, num_node_features) containing node features:
+            (protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization,
+        chirality, num_heteroatoms, degree, num_hydrogens, formal_charge, num_radical_electrons)
+    """
+    
+    node_features  = []
+
+    # Iterate over each atom in the molecule and calculate node features
+    for atom in mol.GetAtoms():
+
+        protein_or_ligand_id = [-1 if atom.GetProp('protein_or_ligand') == 'protein' else 1][0]
+        
+        # Calculate node features
+        atomic_num = atom.GetAtomicNum()
+        atomic_mass = atom.GetMass()
+        aromatic_indicator = int(atom.GetIsAromatic())
+        ring_indicator = int(atom.IsInRing())
+        hybridization_tag = atom.GetHybridization()
+
+        if hybridization_tag == HybridizationType.SP:
+            hybridization = 1
+        elif hybridization_tag == HybridizationType.SP2:
+            hybridization = 2
+        elif hybridization_tag == HybridizationType.SP3:
+            hybridization = 3
+        else:
+            hybridization = 0
+
+        chiral_tag = atom.GetChiralTag()
+
+        if chiral_tag == ChiralType.CHI_TETRAHEDRAL_CW:
+            chirality = 1
+
+        elif chiral_tag == ChiralType.CHI_TETRAHEDRAL_CCW:
+            chirality = -1
+        else:
+            chirality = 0
+
+        num_heteroatoms = len([bond for bond in atom.GetBonds() if bond.GetOtherAtom(atom).GetAtomicNum() != atom.GetAtomicNum()])
+        degree = atom.GetDegree()
+        num_hydrogens = len([bond for bond in atom.GetBonds() if bond.GetOtherAtom(atom).GetAtomicNum() == 1])
+
+        formal_charge = atom.GetFormalCharge()
+        num_radical_electrons = atom.GetNumRadicalElectrons()
+
+        # Append node features to list
+        node_features.append((protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization,
+        chirality, num_heteroatoms, degree, num_hydrogens, formal_charge, num_radical_electrons))
+
+    return np.array(node_features, dtype='float64')
+
 def rdkit_mol_featurizer(mol: Mol, 
-                         charges: list, 
-                         num_atoms_in_protein: int = None,
-                         non_convalent_edges: bool = True,
+                         pairwise_function: callable,
                          ) -> tuple: 
     """
     Extracts graph features from a given RDKit molecule object.
@@ -397,18 +395,8 @@ def rdkit_mol_featurizer(mol: Mol,
 
     AssignStereochemistry(mol, force=True, cleanIt=True)
 
-    protein_or_ligand_ids = [-1 if atom.GetIdx() < num_atoms_in_protein else 1 for atom in mol.GetAtoms()]
-
-    add_charges_to_molecule(mol, charges)
-
-    node_features = get_node_features(mol, protein_or_ligand_ids)
+    node_features = get_node_features(mol)
     
-    pocket_atom_indices = find_pocket_atoms_RDKit(mol, protein_or_ligand_ids, num_atoms_in_protein)
-    pocket_node_features = [node_features[i] for i in pocket_atom_indices]
+    edge_features, edge_indices = get_edge_features(mol, pairwise_function)
 
-    if non_convalent_edges:
-        edge_features, edge_indices = get_edge_features(mol, pocket_atom_indices)
-    else:
-        edge_features, edge_indices = None, None
-
-    return np.array(pocket_node_features, dtype='float64'), np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
+    return np.array(node_features, dtype='float64'), np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
