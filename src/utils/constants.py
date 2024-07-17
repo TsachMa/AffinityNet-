@@ -6,6 +6,7 @@ CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir, os.pardir))
 
 ES_THRESHOLD = 25 #kJ/mol
+ES_DIST_THRESHOLD = 5 #Å
 POCKET_THRESHOLD = 10 #Å
 
 # Van der Waals radii for common elements (in pm)

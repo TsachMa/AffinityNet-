@@ -10,7 +10,7 @@ import os
 import sys
 sys.path.append("../../")
 from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
-from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES
+from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES, ES_DIST_THRESHOLD
 from tqdm import tqdm 
 
 def get_vdw_radius(symbol):
@@ -196,7 +196,7 @@ def covalent_bonds(mol, atom_1, atom_2):
 def vdw_interactions(mol, atom_1, atom_2):
     """
     Determine if there is a van der Waals interaction between atom 1 and atom 2 based on whether the interatomic distance is less 
-    than or equal to the sum of the van der Waals radii of the two atoms.
+    than ES_DIST_THRESHOLD.
     
     Parameters:
     mol (Chem.Mol): The RDKit molecule.
@@ -230,7 +230,7 @@ def vdw_interactions(mol, atom_1, atom_2):
 
     return None
 
-def ionic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
+def ionic_interaction_using_pcs(mol: Chem.Mol, atom_1: int, atom_2: int):
     """
     Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the coulombic interaction
     between the two atoms is less than or equal to some threshold imported from src/utils/constants.py.
@@ -293,6 +293,35 @@ def ionic_interaction(mol: Chem.Mol, atom_1: int, atom_2: int):
     else:
         return None
     
+def ionic_interaction_using_distance(mol: Chem.Mol, atom_1: int, atom_2: int):
+    """
+    Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the distance between the two atoms is less than 
+    ES_DIST_THRESHOLD (defined in src/utils/constants.py).
+    
+    Parameters:
+    mol (Chem.Mol): The RDKit molecule. NOTE: We assume that the molecule has _TriposAtomCharges charges assigned to the atoms.
+    atom_1 (int): The index of the first atom.
+    atom_2 (int): The index of the second atom.
+    
+    Returns:
+    tuple: (0, 0, 0, 0, distance) if there is an electrostatic interaction, None otherwise 
+
+    """ 
+    
+    # Get the distance between the two atoms
+    conf = mol.GetConformer()
+    pos_1 = conf.GetAtomPosition(atom_1)
+    pos_2 = conf.GetAtomPosition(atom_2)
+    distance = pos_1.Distance(pos_2)
+
+    # Check if the Coulombic interaction is less than or equal to the threshold
+    if distance <= ES_DIST_THRESHOLD:
+        return (0, 0, 0, 0, 0, distance)
+    
+    else:
+
+        return None
+    
 def get_edge_features(mol: Mol,
                       pocket_atom_indices: list,
                       pairwise_function: callable,
@@ -326,6 +355,7 @@ def get_edge_features(mol: Mol,
                 i_j_edge_features = pairwise_function(mol, atom1, atom2)
 
                 if i_j_edge_features:
+
                     # Append edge indices to list, duplicating to account for both directions
                     edge_indices.append((atom1, atom2))
                     edge_indices.append((atom2, atom1))
