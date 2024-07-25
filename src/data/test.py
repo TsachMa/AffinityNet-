@@ -3,18 +3,23 @@ import unittest
 import sys
 sys.path.append("../../")
 
-from src.data.utils import rdkit_mol_featurizer, pdb_to_rdkit_mol, get_protein_or_ligand_ids
-from src.data.pocket_generator import read_molecule, find_pocket_atoms, save_pocket_atoms, find_and_save_pocket_atoms
+from src.data.utils import get_node_features, rdkit_mol_featurizer, mol2_to_rdkit_mol, get_protein_or_ligand_ids, extract_charges_from_mol2
+from src.data.pocket_utils import read_molecule, find_pocket_atoms_OB, find_and_save_pocket_atoms
 from src.utils.constants import PROJECT_ROOT
 HOME_DIR = PROJECT_ROOT
+
 class TestRDKitMolFeaturizer(unittest.TestCase):
     def setUp(self):
-        self.mol = pdb_to_rdkit_mol(f"{HOME_DIR}/test_data/pdb/test_methionine.pdb")
+        self.mol = mol2_to_rdkit_mol(f"{HOME_DIR}/test_data/pdb/test_methionine.mol2")
         self.protein_or_ligand_id = [-1, -1, -1, -1, -1, -1, -1, -1]
-        self.node_features, self.edge_features, self.edge_indices = rdkit_mol_featurizer(self.mol, self.protein_or_ligand_id)
+        self.charges = extract_charges_from_mol2(f"{HOME_DIR}/test_data/pdb/test_methionine.mol2")
+        self.node_features, self.edge_features, self.edge_indices = rdkit_mol_featurizer(self.mol, self.charges, self.protein_or_ligand_id, non_convalent_edges=False)
+    
+    def test_charge_extractor(self):
+        expected_charges = [-1.04, -0.074, 0.329, -0.545, -0.397, -0.458, 0.141, -0.661, 0.323, 0.321, 0.334, 0.162, 0.215, 0.192, 0.175, 0.197, 0.199, 0.194, 0.195, 0.198]
+        np.testing.assert_array_almost_equal(self.charges, expected_charges)
 
     def test_rdkit_mol_featurizer(self):
-
         #we know that this receptor is just the methionine molecule
         #the features are: 
         # (atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization, chirality, 
@@ -223,7 +228,7 @@ class TestPocketGenerator(unittest.TestCase):
     def test_find_pocket_atoms(self):
         protein = read_molecule(f"{HOME_DIR}/test_data/pdb/1a0q_protein.pdb")
         ligand = read_molecule(f"{HOME_DIR}/test_data/pdb/1a0q_ligand.mol2")
-        pocket_atoms = find_pocket_atoms(protein.atoms, ligand.atoms, 5)
+        pocket_atoms = find_pocket_atoms_OB(protein.atoms, ligand.atoms, 5)
         print(len(pocket_atoms))
 
     def test_find_and_save_pocket_atoms(self):
