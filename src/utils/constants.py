@@ -7,7 +7,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir, os.pardir))
 
 ES_THRESHOLD = 25 #kJ/mol
 ES_DIST_THRESHOLD = 5 #Å
-POCKET_THRESHOLD = 10 #Å
+POCKET_THRESHOLD = 5 #Å
+
+#PDB_DATA = '/Users/tsachmackey/dfs/affinity_net/PDBbind/v2020-other-PL'
+PDB_DATA = '/Users/tsachmackey/dfs/affinity_net/PDBbind/refined-set'
 
 # Van der Waals radii for common elements (in pm)
 VDW_RADII = {

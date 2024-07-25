@@ -1,28 +1,25 @@
 from rdkit.Chem.rdmolfiles import MolFromPDBFile
 from rdkit.Chem.rdchem import Mol
-from rdkit.Chem import AllChem
 
 import numpy as np
 import rdkit.Chem as Chem
-from rdkit.Chem import AddHs, AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
-from rdkit.Chem.AllChem import ComputeGasteigerCharges
+from rdkit.Chem import AssignStereochemistry, HybridizationType, ChiralType, BondStereo, MolFromMol2File
 import os
 import sys
 sys.path.append("../../")
-from src.data.pocket_utils import get_atom_coordinates, find_pocket_atoms_RDKit
-from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES, ES_DIST_THRESHOLD, VDW_RADII
-from tqdm import tqdm 
+from src.utils.constants import ES_THRESHOLD, METAL_OX_STATES, ES_DIST_THRESHOLD, VDW_RADII, PDB_DATA
+from src.utils.debugging import time_block
 
 def get_vdw_radius(symbol):
     return VDW_RADII.get(symbol, 200) / 100  # 200 is Default value for unknown elements, convert to Angstrom
 
-def pdb_to_rdkit_mol(pdb_filepath: str): 
+def pdb_to_rdkit_mol(pdb_filepath: str, sanitize: bool = True): 
 
     #check if the file exists
     if not os.path.exists(pdb_filepath):
         raise FileNotFoundError(f"File {pdb_filepath} not found")
 
-    mol = MolFromPDBFile(pdb_filepath, removeHs=True)
+    mol = MolFromPDBFile(pdb_filepath, removeHs=True, sanitize = sanitize)
 
     return mol
 
@@ -103,27 +100,22 @@ def extract_charges_from_mol2(file_path):
 
     return charges
 
-def covalent_bonds(mol, atom_1, atom_2):
-    """
-    Determine if there is a covalent bond between two specified atoms in a molecule and get bond features.
-    
-    Parameters:
-    mol (Chem.Mol): The RDKit molecule.
-    atom_1 (int): The index of the first atom.
-    atom_2 (int): The index of the second atom.
-    
-    Returns:
-    tuple: A tuple containing bond order, aromaticity, conjugation, ring, and stereochemistry.
-           If there is no bond, returns (0, 0, 0, 0, 0).
-    """
-    bond = mol.GetBondBetweenAtoms(atom_1, atom_2)
+def get_covalent_bond_edge_features(mol) -> tuple:
 
-    if bond: 
+    #loop over all the bonds in the molecule and get the edge features
+    edge_features, edge_indices = [], []
+
+    for bond in mol.GetBonds():
+        atom1 = bond.GetBeginAtomIdx()
+        atom2 = bond.GetEndAtomIdx()
+
         # Calculate edge features
         bond_order = bond.GetBondTypeAsDouble()
         aromaticity = int(bond.GetIsAromatic())
         conjugation = int(bond.GetIsConjugated())
+        
         ring = int(bond.IsInRing())
+
         stereochemistry_tag = bond.GetStereo()
         
         if stereochemistry_tag == BondStereo.STEREOZ:
@@ -132,11 +124,17 @@ def covalent_bonds(mol, atom_1, atom_2):
             stereochemistry = -1
         else:
             stereochemistry = 0
-        return (bond_order, aromaticity, conjugation, ring, stereochemistry)
-    else:
-        return None
+        bond_features = (bond_order, aromaticity, conjugation, ring, stereochemistry)
 
-def vdw_interactions(mol, atom_1, atom_2):
+        edge_indices.append((atom1, atom2))
+        edge_indices.append((atom2, atom1))
+
+        edge_features.append(bond_features)
+        edge_features.append(bond_features)
+
+    return np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
+
+def vdw_interactions(mol, conf, atom_1, atom_2):
     """
     Determine if there is a van der Waals interaction between atom 1 and atom 2 based on whether the interatomic distance is less 
     than ES_DIST_THRESHOLD.
@@ -150,12 +148,9 @@ def vdw_interactions(mol, atom_1, atom_2):
     tuple: (0, 0, 0, 0, 0) if there is a van der Waals interaction, None otherwise 
     """
 
-    # Get the coordinates of the atoms
-    pos1 = np.array(mol.GetConformer().GetAtomPosition(atom_1))
-    pos2 = np.array(mol.GetConformer().GetAtomPosition(atom_2))
-
-    # Compute the distance between the two atoms
-    distance = np.linalg.norm(pos1 - pos2)
+    pos_1 = conf.GetAtomPosition(atom_1)
+    pos_2 = conf.GetAtomPosition(atom_2)
+    distance = pos_1.Distance(pos_2)
 
     # Get the van der Waals radii of the two atoms
     atom_1_symbol = mol.GetAtomWithIdx(atom_1).GetSymbol()
@@ -169,7 +164,60 @@ def vdw_interactions(mol, atom_1, atom_2):
 
     return None
 
-def ionic_interaction_using_pcs(mol: Chem.Mol, atom_1: int, atom_2: int):
+def get_vdw_radius(symbol: str) -> float:
+    # Placeholder function to get van der Waals radius for a given atom symbol
+    vdw_radii = {
+        'H': 1.2, 'C': 1.7, 'N': 1.55, 'O': 1.52, 'F': 1.47, 'P': 1.80, 'S': 1.80, 'Cl': 1.75,
+        # Add more elements as needed
+    }
+    return vdw_radii.get(symbol, 1.5)  # Default value if the element is not in the dictionary
+
+def get_vdw_interaction_edge_features(mol) -> tuple:
+    """
+    Extracts edge features for van der Waals interactions from a given RDKit molecule object.
+
+    Parameters:
+        mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
+
+    Returns:
+        edge_features (np.ndarray): A 2D array of shape (num_edges, num_edge_features) containing edge features.
+        edge_indices (np.ndarray): A 2D array of shape (num_edges, 2) containing the indices of the atoms connected by each edge.
+    """
+    # Get the conformer
+    conf = mol.GetConformer()
+
+    # Get positions of all atoms
+    positions = conf.GetPositions()
+    
+    # Compute pairwise distances using matrix operations
+    dist_matrix = np.sqrt(np.sum((positions[:, np.newaxis, :] - positions[np.newaxis, :, :]) ** 2, axis=-1))
+
+    # Get van der Waals radii for all atoms
+    vdw_radii = np.array([get_vdw_radius(mol.GetAtomWithIdx(i).GetSymbol()) for i in range(mol.GetNumAtoms())])
+
+    # Create a matrix of summed van der Waals radii
+    vdw_sum_matrix = vdw_radii[:, np.newaxis] + vdw_radii[np.newaxis, :]
+
+    # Find pairs of atoms within the van der Waals interaction distance
+    atom_pairs = np.transpose(np.where((dist_matrix <= vdw_sum_matrix) & (dist_matrix > 0)))
+
+    # Initialize lists to store edge features and indices
+    edge_indices, edge_features = [], []
+
+    # Iterate over atom pairs
+    for pair in atom_pairs:
+        atom1, atom2 = pair
+        
+        # Append edge indices to list, duplicating to account for both directions
+        edge_indices.append((atom1, atom2))
+
+        # Append edge features to list, duplicating to account for both directions
+        edge_feature = (0, 0, 0, 0, 0)
+        edge_features.append(edge_feature)
+    
+    return np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
+
+def ionic_interaction_using_pcs(mol: Chem.Mol, conf, atom_1: int, atom_2: int):
     """
     Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the coulombic interaction
     between the two atoms is less than or equal to some threshold imported from src/utils/constants.py.
@@ -218,8 +266,6 @@ def ionic_interaction_using_pcs(mol: Chem.Mol, atom_1: int, atom_2: int):
     charge_1 = float(mol.GetAtomWithIdx(atom_1).GetProp('_TriposAtomCharges'))
     charge_2 = float(mol.GetAtomWithIdx(atom_2).GetProp('_TriposAtomCharges'))
     
-    # Get the distance between the two atoms
-    conf = mol.GetConformer()
     pos_1 = conf.GetAtomPosition(atom_1)
     pos_2 = conf.GetAtomPosition(atom_2)
     distance = pos_1.Distance(pos_2)
@@ -232,7 +278,7 @@ def ionic_interaction_using_pcs(mol: Chem.Mol, atom_1: int, atom_2: int):
     else:
         return None
     
-def ionic_interaction_using_distance(mol: Chem.Mol, atom_1: int, atom_2: int):
+def ionic_interaction_using_distance(mol: Chem.Mol, conf, atom_1: int, atom_2: int):
     """
     Determine if there is an electrostatic interaction between atom 1 and atom 2 based on whether the distance between the two atoms is less than 
     ES_DIST_THRESHOLD (defined in src/utils/constants.py).
@@ -247,8 +293,6 @@ def ionic_interaction_using_distance(mol: Chem.Mol, atom_1: int, atom_2: int):
 
     """ 
     
-    # Get the distance between the two atoms
-    conf = mol.GetConformer()
     pos_1 = conf.GetAtomPosition(atom_1)
     pos_2 = conf.GetAtomPosition(atom_2)
     distance = pos_1.Distance(pos_2)
@@ -260,54 +304,54 @@ def ionic_interaction_using_distance(mol: Chem.Mol, atom_1: int, atom_2: int):
     else:
 
         return None
-    
-def get_edge_features(mol: Mol,
-                    pairwise_function: callable,
-                      ) -> tuple:
-    
-    """
 
-    Extracts edge features from a given RDKit molecule object.
+def get_ionic_interaction_edge_features(mol) -> tuple:
+    """
+    Extracts edge features for ionic interactions from a given RDKit molecule object.
+
     Parameters:
         mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
-        pocket_atom_indices (list): A list of ints containing the indices of the atoms in the pocket.
-        pairwise_function (callable): A function that takes two atoms and returns edge features.
 
     Returns:
-        edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
-        edge_indices (np.ndarray): A 2D array of shape (num_bonds, 2) containing the indices of the atoms connected by each bond.
-    
+        edge_features (np.ndarray): A 2D array of shape (num_edges, num_edge_features) containing edge features.
+        edge_indices (np.ndarray): A 2D array of shape (num_edges, 2) containing the indices of the atoms connected by each edge.
     """
+    # Get the conformer
+    conf = mol.GetConformer()
 
-    # Initialize a list to store edge features and indices
+    # Get positions of all atoms
+    positions = conf.GetPositions()
+    
+    # Compute pairwise distances using matrix operations
+    dist_matrix = np.sqrt(np.sum((positions[:, np.newaxis, :] - positions[np.newaxis, :, :]) ** 2, axis=-1))
+    
+    # Find pairs of atoms within the distance threshold
+    atom_pairs = np.transpose(np.where((dist_matrix <= ES_DIST_THRESHOLD) & (dist_matrix > 0)))
+    
+    # Initialize lists to store edge features and indices
     edge_indices, edge_features = [], []
 
-    #for every atom in the pocket, create an edge between atoms if they are within 4 angstroms of each other
-    for i, atom1 in tqdm(enumerate(range(mol.GetNumAtoms()))):
+    # Iterate over atom pairs
+    for pair in atom_pairs:
+        atom1, atom2 = pair
+        if atom1 < atom2: 
+            pos_1 = positions[atom1]
+            pos_2 = positions[atom2]
+            distance = np.linalg.norm(pos_1 - pos_2)
+            
+            # Append edge indices to list, duplicating to account for both directions
+            edge_indices.append((atom1, atom2))
+            edge_indices.append((atom2, atom1))
+
+            # Append edge features to list, duplicating to account for both directions
+            edge_feature = (0, 0, 0, 0, distance)
+            edge_features.append(edge_feature)
+            edge_features.append(edge_feature)
     
-        atom_i = mol.GetAtomWithIdx(atom1)
-
-        for j, atom2 in tqdm(enumerate(range(mol.GetNumAtoms()))):
-    
-            atom_j = mol.GetAtomWithIdx(atom2)
-
-            if j > i: #only consider the upper triangle of the matrix
-    
-                i_j_edge_features = pairwise_function(mol, atom1, atom2)
-
-                if i_j_edge_features:
-
-                    # Append edge indices to list, duplicating to account for both directions
-                    edge_indices.append((atom1, atom2))
-                    edge_indices.append((atom2, atom1))
-
-                    # Append edge features to list, duplicating to account for both directions
-                    edge_features.append(i_j_edge_features)
-                    edge_features.append(i_j_edge_features)
-
     return np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
 
 def add_charges_to_molecule(mol, charges):
+
     if len(mol.GetAtoms()) != len(charges):
         raise ValueError(f"The number of charges {len(charges)} does not match the number of atoms {len(mol.GetAtoms())} in the molecule.")
     
@@ -378,25 +422,38 @@ def get_node_features(mol: Mol) -> np.ndarray:
 
     return np.array(node_features, dtype='float64')
 
-def rdkit_mol_featurizer(mol: Mol, 
-                         pairwise_function: callable,
+def rdkit_mol_featurizer(mol: Mol,
+                         pairwise_function: str,
                          ) -> tuple: 
     """
-    Extracts graph features from a given RDKit molecule object.
-    Parameters:
-        mol (rdkit.Chem.rdchem.Mol): RDKit molecule object.
-        protein_or_ligand_ids (list): A list of ints describing whether each atom in the molecule is a protein (-1) or a ligand (1) atom. 
+    Featurizes an RDKit molecule by extracting node features, edge features, and edge indices.
+    
+    Args:
+        mol (rdkit.Chem.rdchem.Mol): The RDKit molecule to be featurized.
+        pairwise_function (str): The type of pairwise function to be used for generating edge features.
+            Supported values are "ionic interactions", "covalent bonds", and "vdw interactions".
+    
     Returns:
-        node_features (np.ndarray): A 2D array of shape (num_atoms, num_node_features) containing node features:
-            (protein_or_ligand_id, atomic_num, atomic_mass, aromatic_indicator, ring_indicator, hybridization, chirality, num_heteroatoms, degree, num_hydrogens, partial_charge, formal_charge, num_radical_electrons)
-        edge_features (np.ndarray): A 2D array of shape (num_bonds, num_edge_features) containing edge features.
-        edge_indices (np.ndarray): A 2D array of shape (num_bonds, 2) containing the indices of the atoms connected by each bond.
+        tuple: A tuple containing the node features, edge features, and edge indices as NumPy arrays.
     """
-
-    AssignStereochemistry(mol, force=True, cleanIt=True)
+    try: 
+        # for atom in mol.GetAtoms():
+        #     atom.UpdatePropertyCache()
+        AssignStereochemistry(mol, force=True, cleanIt=True)
+    except Exception as e:
+        #add to the error log file 
+        with open(os.path.join(PDB_DATA, 'featurization_error.log'), 'a') as file:
+            file.write(f"Error processing {mol.GetProp('_Name')}: {e}")
 
     node_features = get_node_features(mol)
-    
-    edge_features, edge_indices = get_edge_features(mol, pairwise_function)
+
+    if pairwise_function == "ionic interactions":
+        edge_features, edge_indices = get_ionic_interaction_edge_features(mol)
+    elif pairwise_function == "covalent bonds":
+        edge_features, edge_indices = get_covalent_bond_edge_features(mol)
+    elif pairwise_function == "vdw interactions":
+        edge_features, edge_indices = get_vdw_interaction_edge_features(mol)
+    else:
+        raise ValueError(f"Pairwise function {pairwise_function} not supported")
 
     return np.array(node_features, dtype='float64'), np.array(edge_features, dtype='float64'), np.array(edge_indices, dtype='int64')
